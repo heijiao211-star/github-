@@ -234,8 +234,9 @@ def format_message(rows, summaries, week_date):
     cards = []
     for r in rows[:20]:
         intro = summaries.get(r["name"], "\u6682\u65e0\u4ecb\u7ecd")
-        intro = re.sub(r"\\[([^\\]]+)\\]\\(([^)]+)\\)", r"\\1", intro)
-        intro = intro.replace("\\n", " ")
+        # \u79fb\u9664\u53ef\u80fd\u7684 markdown \u94fe\u63a5\uff0c\u9632\u6b62 HTML \u6e32\u67d3\u95ee\u9898
+        intro = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", intro)
+        intro = intro.replace("\n", " ")
         growth_num = r["growth"].replace("\u2b07\ufe0f", "").replace("\u2b06\ufe0f", "").replace("\u2b07", "").replace("\u2b06", "").replace("\ufe0f", "")
         cards.append(
             f'  <div class="card">\n'
