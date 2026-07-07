@@ -163,26 +163,28 @@ def summarize_with_ai(repos):
         repo_texts.append(text)
 
     prompt = (
-        "你是一个技术博主，专门把 GitHub 上的英文开源项目用通俗易懂的中文"
-        "介绍给完全不懂技术的小白用户。\n\n"
-        "要求：\n"
-        "1. 每个项目用 2-3 句话介绍，字数在 40-60 字之间。\n"
-        "2. 第一句说它是干什么的（用比喻或生活化的语言）。\n"
-        "3. 第二句说它能解决什么问题或适合谁用。\n"
-        "4. 不要用专业术语，不要假大空的评价。\n\n"
+        "你是一个专门给中国小白用户介绍 GitHub 开源项目的中文技术博主。\n\n"
+        "任务：根据下面每个项目的英文名、描述和 README 摘要，写一段地道的中文介绍。\n\n"
+        "严格要求（必须遵守）：\n"
+        "1. 必须用纯中文输出，不允许出现任何英文单词、英文句子、英文缩写。\n"
+        "2. 每个项目写 2-3 句话，40-60 个汉字。\n"
+        "3. 第一句用生活化的比喻或场景，说明这个工具/项目是干什么的。\n"
+        "4. 第二句说明它能解决什么问题，适合什么样的人用。\n"
+        "5. 不要出现“赋能”“抓手”“闭环”这类空话，要像朋友聊天一样自然。\n"
+        "6. 输出格式必须是 JSON，键是项目全名，值是中文介绍。\n\n"
         + "\n".join(repo_texts)
-        + "\n\n请严格按照以下 JSON 格式返回，不要有任何额外解释：\n"
-        + "{\"项目名\": \"40-60字的通俗中文介绍\", ...}"
+        + "\n\n请严格按照以下 JSON 格式返回，不要有任何额外解释，键必须是项目全名：\n"
+        + "{\"owner/repo\": \"40-60字的地道中文介绍\", ...}"
     )
 
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": "你是开源项目中文介绍助手，只输出 JSON。"},
+            {"role": "system", "content": "你是中文开源项目介绍助手，只输出纯中文 JSON，绝对不允许出现英文。"},
             {"role": "user", "content": prompt},
         ],
-        "temperature": 0.5,
-        "max_tokens": 2000,
+        "temperature": 0.4,
+        "max_tokens": 3000,
     }
 
     req = urllib.request.Request(
@@ -198,6 +200,7 @@ def summarize_with_ai(repos):
         with urllib.request.urlopen(req, timeout=120) as r:
             resp = json.loads(r.read().decode("utf-8", errors="ignore"))
         content = resp["choices"][0]["message"]["content"]
+        print(f"[DEBUG] AI raw response preview: {content[:800]}")
 
         summaries = {}
         # 尝试提取 JSON 代码块
@@ -217,18 +220,28 @@ def summarize_with_ai(repos):
                 except Exception:
                     pass
 
-        # 保证每个项目都有值，没有的话使用英文 description 回退
+        print(f"[DEBUG] parsed {len(summaries)} summaries, keys: {list(summaries.keys())[:10]}")
+
+        # 保证每个项目都有值，支持模糊匹配
         result = {}
         for r in repos:
             name = r["name"]
             summary = summaries.get(name, "")
+            # 模糊匹配: 后半部分名称
+            if not summary:
+                short_name = name.split("/")[-1]
+                for k in summaries:
+                    if k == short_name or k.endswith(f"/{short_name}"):
+                        summary = summaries[k]
+                        break
+            # 如果仍然没有，用中文通用允底
             if not summary or not isinstance(summary, str):
-                summary = r.get("description") or "暂无介绍"
+                summary = "这个项目本周升幅不错，可以点击名字看看是不是你想要的工具。"
             result[name] = summary
         return result
     except Exception as e:
         print(f"[WARN] AI summary failed: {e}")
-        return {r["name"]: (r.get("description") or "（AI 摘要失败）") for r in repos}
+        return {r["name"]: "本周热门开源项目，点击名字查看详情。" for r in repos}
 
 
 def format_message(rows, summaries, week_date):
