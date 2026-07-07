@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GitHub 每周飙升榜 -> PushPlus 推送
+GitHub 每周飙升榜 -> AI 生成中文简介 -> PushPlus 推送
 数据源: https://github.com/OpenGithubs/github-weekly-rank
 推送: https://www.pushplus.plus
 """
@@ -18,24 +18,42 @@ SOURCE_OWNER = "OpenGithubs"
 SOURCE_REPO = "github-weekly-rank"
 PUSHPLUS_API = "https://www.pushplus.plus/send"
 
+# AI 配置（OpenAI 兼容接口）
+DEFAULT_AI_BASE_URL = "https://api.deepseek.com"
+DEFAULT_AI_MODEL = "deepseek-chat"
 
-def http_get_json(url, timeout=30):
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/vnd.github+json",
-        },
-    )
+
+def http_get(url, headers=None, timeout=30):
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/vnd.github+json",
+    }
+    if headers:
+        req_headers.update(headers)
+    req = urllib.request.Request(url, headers=req_headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", errors="ignore"))
+        return r.read().decode("utf-8", errors="ignore")
+
+
+def http_get_json(url, headers=None, timeout=30):
+    return json.loads(http_get(url, headers, timeout))
+
+
+def get_github_token():
+    return os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+
+
+def github_api_headers():
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    token = get_github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def get_latest_weekly_file():
     """找到 OpenGithubs/github-weekly-rank 中最新的周榜 Markdown 文件路径."""
     now = datetime.datetime.now()
-    # 周榜文件命名: YYYY/MM/YYYYMMDD.md, 周一早上 8 点更新
-    # 最近 5 周(35天)的候选
     candidates = []
     for i in range(5):
         d = now - datetime.timedelta(days=7 * i)
@@ -85,11 +103,117 @@ def parse_rank_table(md):
     return rows
 
 
-def format_message(rows, week_date):
+def fetch_repo_details(full_name):
+    """获取单个仓库的基本信息 + README 摘要."""
+    parts = full_name.split("/")
+    if len(parts) != 2:
+        return None
+    owner, repo = parts
+    try:
+        info = http_get_json(f"https://api.github.com/repos/{owner}/{repo}", headers=github_api_headers())
+        desc = info.get("description") or ""
+        topics = ", ".join(info.get("topics", [])) or ""
+        language = info.get("language") or ""
+        readme = ""
+        try:
+            readme_data = http_get_json(f"https://api.github.com/repos/{owner}/{repo}/readme", headers=github_api_headers())
+            readme_text = base64.b64decode(readme_data["content"]).decode("utf-8", errors="ignore")
+            # 去除 markdown 链接和图片，保留纯文本摘要
+            readme = readme_text[:4000]
+            readme = re.sub(r"!\[.*?\]\(.*?\)", "", readme)
+            readme = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", readme)
+            readme = re.sub(r"[#*`>-]", "", readme)
+            readme = re.sub(r"\n+", "\n", readme).strip()[:1500]
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                print(f"[WARN] readme fetch error for {full_name}: {e}")
+        return {
+            "name": full_name,
+            "url": f"https://github.com/{full_name}",
+            "description": desc,
+            "topics": topics,
+            "language": language,
+            "readme": readme,
+        }
+    except Exception as e:
+        print(f"[WARN] repo detail error for {full_name}: {e}")
+        return None
+
+
+def summarize_with_ai(repos):
+    """用 AI 批量生成中文一句话简介."""
+    api_key = os.environ.get("AI_API_KEY")
+    if not api_key:
+        return {r["name"]: "（未配置 AI 接口）" for r in repos}
+
+    base_url = os.environ.get("AI_BASE_URL", DEFAULT_AI_BASE_URL).rstrip("/")
+    model = os.environ.get("AI_MODEL", DEFAULT_AI_MODEL)
+
+    # 构建提示词
+    repo_texts = []
+    for idx, r in enumerate(repos, 1):
+        text = f"{idx}. 项目名: {r['name']}\n"
+        text += f"   英文描述: {r['description'] or '无'}\n"
+        if r.get("topics"):
+            text += f"   标签: {r['topics']}\n"
+        if r.get("language"):
+            text += f"   主要语言: {r['language']}\n"
+        if r.get("readme"):
+            text += f"   README 摘要: {r['readme'][:400]}\n"
+        repo_texts.append(text)
+
+    prompt = (
+        "你是一个技术博主，专门把 GitHub 上的英文开源项目用通俗易懂的中文"
+        "介绍给普通用户。对每个项目用 1 句话说清楚："
+        "它是干什么的，能解决什么问题，为什么值得关注。\n\n"
+        + "\n".join(repo_texts)
+        + "\n\n请严格按照以下 JSON 格式返回，不要有任何额外解释：\n"
+        + "{\"项目名\": \"一句话中文介绍\", ...}"
+    )
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "你是开源项目中文介绍助手，只输出 JSON。"},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.5,
+        "max_tokens": 2000,
+    }
+
+    req = urllib.request.Request(
+        f"{base_url}/v1/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            resp = json.loads(r.read().decode("utf-8", errors="ignore"))
+        content = resp["choices"][0]["message"]["content"]
+        # 提取 JSON
+        json_match = re.search(r"\{[\s\S]*\}", content)
+        if json_match:
+            summaries = json.loads(json_match.group())
+        else:
+            summaries = {}
+        # 保证每个项目都有值
+        return {r["name"]: summaries.get(r["name"], "暂无介绍") for r in repos}
+    except Exception as e:
+        print(f"[WARN] AI summary failed: {e}")
+        return {r["name"]: "（AI 摘要失败）" for r in repos}
+
+
+def format_message(rows, summaries, week_date):
     lines = [f"## GitHub 每周飙升榜 Top20 ({week_date})", ""]
     for r in rows[:20]:
+        intro = summaries.get(r["name"], "暂无介绍")
         lines.append(f"{r['rank']}. [{r['name']}]({r['url']})")
         lines.append(f"   ⭐ {r['stars']} | {r['growth']}")
+        lines.append(f"   💡 {intro}")
     lines.append("")
     lines.append(
         "来源: [OpenGithubs/github-weekly-rank]"
@@ -133,7 +257,19 @@ def main():
     rows = parse_rank_table(md)
     print(f"[INFO] parsed {len(rows)} rows")
 
-    msg = format_message(rows, week_date)
+    print("[INFO] fetching repo details...")
+    repos = []
+    for r in rows[:20]:
+        detail = fetch_repo_details(r["name"])
+        if detail:
+            repos.append(detail)
+        else:
+            repos.append({"name": r["name"], "description": "", "topics": "", "language": "", "readme": ""})
+
+    print("[INFO] generating AI summaries...")
+    summaries = summarize_with_ai(repos)
+
+    msg = format_message(rows, summaries, week_date)
     title = f"GitHub 每周飙升榜 ({week_date})"
     push_to_pushplus(token, title, msg)
     print("[INFO] 推送完成")
