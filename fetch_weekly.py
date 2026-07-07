@@ -194,7 +194,6 @@ def summarize_with_ai(repos):
         with urllib.request.urlopen(req, timeout=120) as r:
             resp = json.loads(r.read().decode("utf-8", errors="ignore"))
         content = resp["choices"][0]["message"]["content"]
-        print(f"[INFO] AI raw response preview: {content[:500]!r}")
 
         summaries = {}
         # 尝试提取 JSON 代码块
@@ -202,9 +201,8 @@ def summarize_with_ai(repos):
         if code_block:
             try:
                 summaries = json.loads(code_block.group(1).strip())
-                print("[INFO] parsed JSON from code block")
-            except Exception as e:
-                print(f"[WARN] code block JSON parse failed: {e}")
+            except Exception:
+                pass
 
         # 尝试直接提取 JSON 对象
         if not summaries:
@@ -212,17 +210,14 @@ def summarize_with_ai(repos):
             if json_match:
                 try:
                     summaries = json.loads(json_match.group())
-                    print("[INFO] parsed JSON from object")
-                except Exception as e:
-                    print(f"[WARN] object JSON parse failed: {e}")
+                except Exception:
+                    pass
 
         # 保证每个项目都有值，没有的话使用英文 description 回退
         result = {}
-        print(f"[INFO] parsed summaries keys: {list(summaries.keys())}")
         for r in repos:
             name = r["name"]
             summary = summaries.get(name, "")
-            print(f"[DEBUG] lookup '{name}' -> found={bool(summary)}")
             if not summary or not isinstance(summary, str):
                 summary = r.get("description") or "暂无介绍"
             result[name] = summary
@@ -295,7 +290,6 @@ def main():
     summaries = summarize_with_ai(repos)
 
     msg = format_message(rows, summaries, week_date)
-    print(f"[INFO] message preview (first 1500 chars):\n{msg[:1500]}")
     title = f"GitHub 每周飙升榜 ({week_date})"
     push_to_pushplus(token, title, msg)
     print("[INFO] 推送完成")
