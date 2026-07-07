@@ -293,6 +293,7 @@ def main():
     summaries = summarize_with_ai(repos)
 
     msg = format_message(rows, summaries, week_date)
+    print(f"[INFO] message preview (first 1500 chars):\n{msg[:1500]}")
     title = f"GitHub 每周飙升榜 ({week_date})"
     push_to_pushplus(token, title, msg)
     print("[INFO] 推送完成")
