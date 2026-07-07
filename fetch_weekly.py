@@ -228,18 +228,71 @@ def summarize_with_ai(repos):
 
 
 def format_message(rows, summaries, week_date):
-    lines = [f"## GitHub 每周飙升榜 Top20 ({week_date})", ""]
+    """\u751f\u6210\u9ad8\u7ea7 HTML \u6d3e\u9001\u6392\u7248."""
+    formatted_date = f"{week_date[:4]}.{week_date[4:6]}.{week_date[6:8]}"
+
+    cards = []
     for r in rows[:20]:
-        intro = summaries.get(r["name"], "暂无介绍")
-        lines.append(f"{r['rank']}. [{r['name']}]({r['url']})")
-        lines.append(f"   ⭐ {r['stars']} | {r['growth']}")
-        lines.append(f"   💡 {intro}")
-    lines.append("")
-    lines.append(
-        "来源: [OpenGithubs/github-weekly-rank]"
-        "(https://github.com/OpenGithubs/github-weekly-rank)"
-    )
-    return "\n".join(lines)
+        intro = summaries.get(r["name"], "\u6682\u65e0\u4ecb\u7ecd")
+        intro = re.sub(r"\\[([^\\]]+)\\]\\(([^)]+)\\)", r"\\1", intro)
+        intro = intro.replace("\\n", " ")
+        growth_num = r["growth"].replace("\u2b07\ufe0f", "").replace("\u2b06\ufe0f", "").replace("\u2b07", "").replace("\u2b06", "").replace("\ufe0f", "")
+        cards.append(
+            f'  <div class="card">\n'
+            f'    <div class="rank">{r["rank"]}</div>\n'
+            f'    <div class="content">\n'
+            f'      <a href="{r["url"]}" class="repo-name">{r["name"]}</a>\n'
+            f'      <div class="meta">\n'
+            f'        <span class="stars">{r["stars"]} stars</span>\n'
+            f'        <span class="growth">{growth_num}</span>\n'
+            f'      </div>\n'
+            f'      <p class="desc">{intro}</p>\n'
+            f'    </div>\n'
+            f'  </div>'
+        )
+
+    html = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  body{{margin:0;padding:0;background:#0c0c0e;font-family:'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;}}
+  .wrap{{max-width:720px;margin:0 auto;padding:48px 24px;}}
+  .hero{{position:relative;background:linear-gradient(160deg,#18181c 0%,#111114 60%,#0d0d0f 100%);border:1px solid rgba(255,255,255,0.06);border-radius:32px;padding:42px 36px;margin-bottom:32px;overflow:hidden;}}
+  .hero::before{{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.12),transparent);}}
+  .kicker{{font-size:11px;font-weight:700;letter-spacing:0.22em;color:#6b7280;text-transform:uppercase;margin-bottom:16px;}}
+  .hero h1{{margin:0;font-size:42px;font-weight:800;color:#fafafa;letter-spacing:-0.04em;line-height:1.05;}}
+  .hero p{{margin:14px 0 0 0;font-size:16px;color:#9ca3af;font-weight:500;max-width:480px;}}
+  .card{{position:relative;background:#141417;border:1px solid rgba(255,255,255,0.05);border-radius:24px;padding:26px;margin-bottom:16px;display:flex;gap:20px;align-items:flex-start;}}
+  .card::after{{content:'';position:absolute;top:0;left:24px;right:24px;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.06),transparent);}}
+  .rank{{font-size:38px;font-weight:800;color:#10b981;line-height:1;min-width:48px;text-align:left;letter-spacing:-0.05em;}}
+  .content{{flex:1;min-width:0;}}
+  .repo-name{{font-size:18px;font-weight:700;color:#f3f4f6;margin-bottom:8px;text-decoration:none;display:block;letter-spacing:-0.01em;}}
+  .meta{{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;}}
+  .stars{{font-size:13px;font-weight:600;color:#6b7280;}}
+  .growth{{font-size:12px;font-weight:700;color:#10b981;background:rgba(16,185,129,0.08);padding:5px 11px;border-radius:100px;border:1px solid rgba(16,185,129,0.14);}}
+  .desc{{margin:0;font-size:15px;color:#d1d5db;line-height:1.75;}}
+  .footer{{text-align:center;padding:32px 0 0 0;}}
+  .footer a{{color:#52525b;font-size:13px;text-decoration:none;font-weight:500;letter-spacing:0.01em;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="kicker">GitHub Weekly Rank</div>
+    <h1>\u6bcf\u5468\u98d9\u5347\u699c Top20</h1>
+    <p>{formatted_date} \u671f \u00b7 \u7cbe\u9009\u672c\u5468\u6700\u503c\u5f97\u5173\u6ce8\u7684\u5f00\u6e90\u9879\u76ee</p>
+  </div>
+\n{chr(10).join(cards)}
+  <div class="footer">
+    <a href="https://github.com/OpenGithubs/github-weekly-rank">\u6570\u636e\u6765\u6e90: OpenGithubs/github-weekly-rank</a>
+  </div>
+</div>
+</body>
+</html>"""
+    return html
 
 
 def push_to_pushplus(token, title, content):
@@ -247,7 +300,7 @@ def push_to_pushplus(token, title, content):
         "token": token,
         "title": title,
         "content": content,
-        "template": "markdown",
+        "template": "html",
     }
     req = urllib.request.Request(
         PUSHPLUS_API,
