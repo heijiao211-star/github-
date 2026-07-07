@@ -194,17 +194,40 @@ def summarize_with_ai(repos):
         with urllib.request.urlopen(req, timeout=120) as r:
             resp = json.loads(r.read().decode("utf-8", errors="ignore"))
         content = resp["choices"][0]["message"]["content"]
-        # 提取 JSON
-        json_match = re.search(r"\{[\s\S]*\}", content)
-        if json_match:
-            summaries = json.loads(json_match.group())
-        else:
-            summaries = {}
-        # 保证每个项目都有值
-        return {r["name"]: summaries.get(r["name"], "暂无介绍") for r in repos}
+        print(f"[INFO] AI raw response preview: {content[:500]!r}")
+
+        summaries = {}
+        # 尝试提取 JSON 代码块
+        code_block = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
+        if code_block:
+            try:
+                summaries = json.loads(code_block.group(1).strip())
+                print("[INFO] parsed JSON from code block")
+            except Exception as e:
+                print(f"[WARN] code block JSON parse failed: {e}")
+
+        # 尝试直接提取 JSON 对象
+        if not summaries:
+            json_match = re.search(r"\{[\s\S]*\}", content)
+            if json_match:
+                try:
+                    summaries = json.loads(json_match.group())
+                    print("[INFO] parsed JSON from object")
+                except Exception as e:
+                    print(f"[WARN] object JSON parse failed: {e}")
+
+        # 保证每个项目都有值，没有的话使用英文 description 回退
+        result = {}
+        for r in repos:
+            name = r["name"]
+            summary = summaries.get(name, "")
+            if not summary or not isinstance(summary, str):
+                summary = r.get("description") or "暂无介绍"
+            result[name] = summary
+        return result
     except Exception as e:
         print(f"[WARN] AI summary failed: {e}")
-        return {r["name"]: "（AI 摘要失败）" for r in repos}
+        return {r["name"]: (r.get("description") or "（AI 摘要失败）") for r in repos}
 
 
 def format_message(rows, summaries, week_date):
