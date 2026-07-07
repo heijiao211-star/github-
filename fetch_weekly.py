@@ -218,9 +218,11 @@ def summarize_with_ai(repos):
 
         # 保证每个项目都有值，没有的话使用英文 description 回退
         result = {}
+        print(f"[INFO] parsed summaries keys: {list(summaries.keys())}")
         for r in repos:
             name = r["name"]
             summary = summaries.get(name, "")
+            print(f"[DEBUG] lookup '{name}' -> found={bool(summary)}")
             if not summary or not isinstance(summary, str):
                 summary = r.get("description") or "暂无介绍"
             result[name] = summary
